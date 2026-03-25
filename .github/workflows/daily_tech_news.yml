@@ -2,7 +2,9 @@ name: 科技与AI资讯自动推送
 
 on:
   schedule:
-    # 每3小时运行一次（UTC时间）
+    # ==========================================
+    # 常规推送：每3小时运行一次（UTC时间）
+    # ==========================================
     # UTC 23:00 = 北京时间 07:00（早间推送）
     # UTC 02:00 = 北京时间 10:00（上午推送）
     # UTC 05:00 = 北京时间 13:00（午间推送）
@@ -10,7 +12,22 @@ on:
     # UTC 11:00 = 北京时间 19:00（晚间推送）
     # UTC 14:00 = 北京时间 22:00（夜间推送）
     - cron: '0 23,2,5,8,11,14 * * *'
+
+    # ==========================================
+    # 每日精华汇总：每天晚上 UTC 13:00 = 北京时间 21:00
+    # ==========================================
+    - cron: '0 13 * * *'
+
   workflow_dispatch:  # 支持手动触发
+    inputs:
+      mode:
+        description: '运行模式：regular=常规推送，digest=每日精华'
+        required: false
+        default: 'regular'
+        type: choice
+        options:
+          - regular
+          - digest
 
 jobs:
   fetch-and-push:
@@ -33,4 +50,25 @@ jobs:
         env:
           SEND_KEY: ${{ secrets.SEND_KEY }}
         run: |
-          python fetch_news.py
+          # 判断运行模式
+          # 1. 手动触发时，根据用户选择的 mode 参数决定
+          # 2. 定时触发时，根据当前 UTC 小时判断：
+          #    - UTC 13:00 触发的是每日精华汇总
+          #    - 其他时间触发的是常规推送
+          
+          CURRENT_HOUR=$(date -u +%H)
+          MODE="${{ github.event.inputs.mode }}"
+          
+          if [ "$MODE" = "digest" ]; then
+            echo "📋 手动触发：每日精华汇总模式"
+            python fetch_news.py --daily-digest
+          elif [ "$MODE" = "regular" ]; then
+            echo "📰 手动触发：常规推送模式"
+            python fetch_news.py
+          elif [ "$CURRENT_HOUR" = "13" ]; then
+            echo "📋 定时触发：每日精华汇总模式（北京时间21:00）"
+            python fetch_news.py --daily-digest
+          else
+            echo "📰 定时触发：常规推送模式"
+            python fetch_news.py
+          fi
