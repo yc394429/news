@@ -724,7 +724,8 @@ def format_regular_message(all_news, trending_list):
     if keyword_hits > 0:
         lines.append(f"*🔍 关键词匹配: {keyword_hits} 条与你关注的AI话题相关*\n")
 
-    lines.append(f"*📊 本次精选：{\" | \".join(stats_parts)}*\n")
+    stats_text = ' | '.join(stats_parts)
+    lines.append(f"*📊 本次精选：{stats_text}*\n")
     lines.append(f"*📡 共监控 {len(ALL_SOURCES)} 个信息源 | 每3小时自动推送*\n")
     lines.append(f"*🔄 v4.0 - 关键词过滤 · GitHub Trending · 每日精华*")
 
