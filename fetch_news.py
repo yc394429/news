@@ -2,10 +2,17 @@
 # -*- coding: utf-8 -*-
 
 """
-科技与AI资讯自动抓取推送脚本
-功能：从多个RSS源抓取最新科技和AI新闻，分类整理后通过Server酱推送到微信
+科技与AI资讯自动抓取推送脚本 v3.0
+功能：从20+个RSS源抓取最新科技和AI新闻，智能分类精选后通过Server酱推送到微信
 作者：自动化部署
-更新：2026-03-25 - 增加AI专项源、优化推送格式、增加分类展示
+更新：2026-03-25 - v3.0 大版本升级
+  - 数据源从12个扩充到20+个
+  - 新增Anthropic/DeepMind/NVIDIA/Meta AI等核心AI平台
+  - 新增机器之心/量子位等中文AI顶会
+  - 新增Hacker News/Product Hunt等开发者社区
+  - 三级分类展示：核心AI平台 / 中文AI与科技 / 全球科技与社区
+  - 智能精选机制，避免信息轰炸
+  - 增加网络请求重试机制，提高稳定性
 """
 
 import requests
@@ -31,97 +38,188 @@ if not SEND_KEY:
 FETCH_HOURS = 4
 
 # 每个分类最多展示的新闻条数
-MAX_NEWS_PER_CATEGORY = 10
+MAX_NEWS_PER_CATEGORY = 8
 
-# 总共最多展示的新闻条数
-MAX_TOTAL_NEWS = 30
+# 总共最多展示的新闻条数（避免推送过长）
+MAX_TOTAL_NEWS = 20
+
+# 网络请求重试次数
+MAX_RETRIES = 2
+
+# 网络请求超时时间（秒）
+REQUEST_TIMEOUT = 15
 
 # ============================================================
-# RSS 新闻源配置（分类管理）
+# RSS 新闻源配置（三级分类管理）
 # ============================================================
 
-# 分类：AI 平台与前沿动态
-AI_SOURCES = [
+# ==========================================
+# 第一类：核心AI平台（官方一手消息）
+# ==========================================
+AI_PLATFORM_SOURCES = [
     {
         "name": "OpenAI",
         "url": "https://openai.com/news/rss.xml",
-        "category": "AI前沿",
-        "icon": "🤖"
+        "category": "核心AI平台",
+        "icon": "🤖",
+        "priority": 1,  # 优先级，1最高
+    },
+    {
+        "name": "Anthropic",
+        "url": "https://www.anthropic.com/rss.xml",
+        "category": "核心AI平台",
+        "icon": "🧬",
+        "priority": 1,
+    },
+    {
+        "name": "Google DeepMind",
+        "url": "https://deepmind.google/blog/rss.xml",
+        "category": "核心AI平台",
+        "icon": "🧠",
+        "priority": 1,
     },
     {
         "name": "Google AI",
         "url": "https://blog.google/technology/ai/rss/",
-        "category": "AI前沿",
-        "icon": "🧠"
+        "category": "核心AI平台",
+        "icon": "🔍",
+        "priority": 1,
+    },
+    {
+        "name": "NVIDIA AI",
+        "url": "https://blogs.nvidia.com/feed/",
+        "category": "核心AI平台",
+        "icon": "💚",
+        "priority": 2,
+    },
+    {
+        "name": "Meta AI",
+        "url": "https://ai.meta.com/blog/rss/",
+        "category": "核心AI平台",
+        "icon": "Ⓜ️",
+        "priority": 1,
     },
     {
         "name": "Hugging Face",
         "url": "https://huggingface.co/blog/feed.xml",
-        "category": "AI前沿",
-        "icon": "🤗"
+        "category": "核心AI平台",
+        "icon": "🤗",
+        "priority": 2,
     },
     {
         "name": "MIT Tech Review AI",
         "url": "https://www.technologyreview.com/topic/artificial-intelligence/feed/",
-        "category": "AI前沿",
-        "icon": "🎓"
+        "category": "核心AI平台",
+        "icon": "🎓",
+        "priority": 2,
     },
     {
         "name": "MarkTechPost",
         "url": "https://www.marktechpost.com/feed/",
-        "category": "AI前沿",
-        "icon": "📝"
+        "category": "核心AI平台",
+        "icon": "📝",
+        "priority": 3,
     },
 ]
 
-# 分类：科技综合资讯
-TECH_SOURCES = [
+# ==========================================
+# 第二类：中文AI与科技核心（国内最快资讯）
+# ==========================================
+CN_SOURCES = [
+    {
+        "name": "机器之心",
+        "url": "https://www.jiqizhixin.com/rss",
+        "category": "中文AI与科技",
+        "icon": "⚙️",
+        "priority": 1,
+    },
+    {
+        "name": "量子位",
+        "url": "https://www.qbitai.com/feed",
+        "category": "中文AI与科技",
+        "icon": "⚛️",
+        "priority": 1,
+    },
     {
         "name": "36氪",
         "url": "https://www.36kr.com/feed/",
-        "category": "科技综合",
-        "icon": "📱"
+        "category": "中文AI与科技",
+        "icon": "📱",
+        "priority": 2,
     },
     {
         "name": "虎嗅网",
         "url": "https://www.huxiu.com/rss.xml",
-        "category": "科技综合",
-        "icon": "🐯"
+        "category": "中文AI与科技",
+        "icon": "🐯",
+        "priority": 2,
     },
     {
         "name": "爱范儿",
         "url": "https://www.ifanr.com/feed/",
-        "category": "科技综合",
-        "icon": "💡"
+        "category": "中文AI与科技",
+        "icon": "💡",
+        "priority": 2,
+    },
+    {
+        "name": "少数派",
+        "url": "https://sspai.com/feed",
+        "category": "中文AI与科技",
+        "icon": "📐",
+        "priority": 3,
+    },
+]
+
+# ==========================================
+# 第三类：全球科技与开发者社区
+# ==========================================
+GLOBAL_TECH_SOURCES = [
+    {
+        "name": "Hacker News",
+        "url": "https://hnrss.org/frontpage",
+        "category": "全球科技与社区",
+        "icon": "🔶",
+        "priority": 2,
+    },
+    {
+        "name": "Product Hunt",
+        "url": "https://www.producthunt.com/feed",
+        "category": "全球科技与社区",
+        "icon": "🏹",
+        "priority": 2,
     },
     {
         "name": "TechCrunch",
         "url": "https://techcrunch.com/feed/",
-        "category": "科技综合",
-        "icon": "🚀"
+        "category": "全球科技与社区",
+        "icon": "🚀",
+        "priority": 2,
     },
     {
         "name": "The Verge",
         "url": "https://www.theverge.com/rss/index.xml",
-        "category": "科技综合",
-        "icon": "⚡"
+        "category": "全球科技与社区",
+        "icon": "⚡",
+        "priority": 2,
     },
     {
         "name": "Wired AI",
         "url": "https://www.wired.com/feed/tag/ai/latest/rss",
-        "category": "科技综合",
-        "icon": "🔌"
+        "category": "全球科技与社区",
+        "icon": "🔌",
+        "priority": 3,
     },
     {
         "name": "Ars Technica",
         "url": "https://feeds.arstechnica.com/arstechnica/index",
-        "category": "科技综合",
-        "icon": "🖥️"
+        "category": "全球科技与社区",
+        "icon": "🖥️",
+        "priority": 3,
     },
 ]
 
 # 合并所有源
-ALL_SOURCES = AI_SOURCES + TECH_SOURCES
+ALL_SOURCES = AI_PLATFORM_SOURCES + CN_SOURCES + GLOBAL_TECH_SOURCES
 
 
 # ============================================================
@@ -134,10 +232,13 @@ def clean_html(text):
         return ""
     clean = re.sub(r'<[^>]+>', '', text)
     clean = re.sub(r'\s+', ' ', clean).strip()
+    # 移除多余的特殊字符
+    clean = clean.replace('&nbsp;', ' ').replace('&amp;', '&')
+    clean = clean.replace('&lt;', '<').replace('&gt;', '>')
     return clean
 
 
-def get_summary(entry, max_length=80):
+def get_summary(entry, max_length=100):
     """从RSS条目中提取摘要，限制长度"""
     summary = ""
     # 优先使用 summary 字段
@@ -167,15 +268,47 @@ def parse_publish_time(entry):
     if hasattr(entry, 'published_parsed') and entry.published_parsed:
         try:
             return datetime(*entry.published_parsed[:6])
-        except:
+        except Exception:
             pass
     # 尝试 updated_parsed
     if hasattr(entry, 'updated_parsed') and entry.updated_parsed:
         try:
             return datetime(*entry.updated_parsed[:6])
-        except:
+        except Exception:
             pass
     # 如果都没有，返回 None（后续会作为"时间未知"处理）
+    return None
+
+
+def fetch_with_retry(url, headers, retries=MAX_RETRIES, timeout=REQUEST_TIMEOUT):
+    """
+    带重试机制的网络请求
+    参数：
+        url: 请求地址
+        headers: 请求头
+        retries: 最大重试次数
+        timeout: 超时时间
+    返回：
+        response 对象，失败返回 None
+    """
+    for attempt in range(retries + 1):
+        try:
+            response = requests.get(url, headers=headers, timeout=timeout)
+            response.encoding = 'utf-8'
+            if response.status_code == 200:
+                return response
+            else:
+                print(f"    ⚠️ HTTP {response.status_code}，第{attempt+1}次尝试")
+        except requests.exceptions.Timeout:
+            print(f"    ⚠️ 请求超时，第{attempt+1}次尝试")
+        except requests.exceptions.ConnectionError:
+            print(f"    ⚠️ 连接失败，第{attempt+1}次尝试")
+        except Exception as e:
+            print(f"    ⚠️ 请求异常: {e}，第{attempt+1}次尝试")
+
+        if attempt < retries:
+            time.sleep(2)  # 重试前等待2秒
+
     return None
 
 
@@ -191,16 +324,20 @@ def get_rss_news(source, hours=FETCH_HOURS):
     news_list = []
     try:
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+                          '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Accept': 'application/rss+xml, application/xml, text/xml, */*',
         }
-        response = requests.get(source["url"], headers=headers, timeout=15)
-        response.encoding = 'utf-8'
+
+        response = fetch_with_retry(source["url"], headers)
+        if not response:
+            print(f"  ❌ {source['name']}: 所有重试均失败，跳过")
+            return news_list
 
         feed = feedparser.parse(response.text)
         cutoff_time = datetime.now() - timedelta(hours=hours)
 
-        for entry in feed.entries[:20]:
+        for entry in feed.entries[:15]:  # 每个源最多取15条
             published = parse_publish_time(entry)
 
             # 如果有时间信息，检查是否在时间范围内
@@ -221,6 +358,7 @@ def get_rss_news(source, hours=FETCH_HOURS):
                 "source": source["name"],
                 "category": source["category"],
                 "icon": source["icon"],
+                "priority": source["priority"],
                 "time": time_str,
                 "published": published,
             })
@@ -236,6 +374,7 @@ def get_rss_news(source, hours=FETCH_HOURS):
 def deduplicate_news(news_list):
     """
     新闻去重：基于标题相似度和链接去重
+    增强版：还会过滤标题高度相似的新闻（不同源转载同一条新闻）
     """
     seen_ids = set()
     seen_titles = set()
@@ -245,23 +384,58 @@ def deduplicate_news(news_list):
         # 基于ID去重
         if news["id"] in seen_ids:
             continue
-        # 基于标题去重（去除空格后比较）
-        clean_title = re.sub(r'\s+', '', news["title"])
-        if clean_title in seen_titles:
+
+        # 基于标题去重（去除空格和标点后比较）
+        clean_title = re.sub(r'[\s\W]+', '', news["title"]).lower()
+
+        # 检查是否有高度相似的标题（前20个字符相同视为重复）
+        title_key = clean_title[:20] if len(clean_title) > 20 else clean_title
+        if title_key in seen_titles:
             continue
 
         seen_ids.add(news["id"])
-        seen_titles.add(clean_title)
+        seen_titles.add(title_key)
         unique_news.append(news)
 
     return unique_news
 
 
+def smart_select(all_news):
+    """
+    智能精选：根据优先级和分类进行均衡选择
+    确保每个分类都有内容展示，同时优先展示高优先级的新闻
+    """
+    # 先按优先级排序（数字小优先级高），再按时间排序
+    all_news.sort(key=lambda x: (x["priority"], -(x["published"].timestamp() if x["published"] else time.time())))
+
+    # 按分类分组
+    categories = {}
+    for news in all_news:
+        cat = news["category"]
+        if cat not in categories:
+            categories[cat] = []
+        categories[cat].append(news)
+
+    # 每个分类最多取 MAX_NEWS_PER_CATEGORY 条
+    selected = []
+    for cat, news_list in categories.items():
+        selected.extend(news_list[:MAX_NEWS_PER_CATEGORY])
+
+    # 如果总数超过限制，按优先级截断
+    if len(selected) > MAX_TOTAL_NEWS:
+        selected.sort(key=lambda x: (x["priority"], -(x["published"].timestamp() if x["published"] else time.time())))
+        selected = selected[:MAX_TOTAL_NEWS]
+
+    return selected
+
+
 def format_news_message(all_news):
     """
     格式化新闻消息，生成美观的Markdown推送内容
+    三级分类展示，清晰明了
     """
     now = datetime.now()
+
     # 根据时间段生成问候语
     hour = now.hour
     if 5 <= hour < 9:
@@ -288,7 +462,7 @@ def format_news_message(all_news):
     # 构建推送正文
     lines = []
     lines.append(f"## {period}科技与AI资讯速递\n")
-    lines.append(f"> 📅 {now.strftime('%Y年%m月%d日 %H:%M')} | 共 {len(all_news)} 条新鲜资讯\n")
+    lines.append(f"> 📅 {now.strftime('%Y年%m月%d日 %H:%M')} | 共 {len(all_news)} 条精选资讯\n")
 
     # 按分类分组
     categories = {}
@@ -298,21 +472,41 @@ def format_news_message(all_news):
             categories[cat] = []
         categories[cat].append(news)
 
-    # 先展示 AI前沿，再展示 科技综合
-    category_order = ["AI前沿", "科技综合"]
+    # 分类展示顺序和标题
+    category_config = {
+        "核心AI平台": {
+            "title": "🤖 核心AI平台动态",
+            "desc": "OpenAI · Anthropic · DeepMind · Google AI · NVIDIA · Meta AI · Hugging Face",
+            "order": 1,
+        },
+        "中文AI与科技": {
+            "title": "🇨🇳 中文AI与科技资讯",
+            "desc": "机器之心 · 量子位 · 36氪 · 虎嗅 · 爱范儿 · 少数派",
+            "order": 2,
+        },
+        "全球科技与社区": {
+            "title": "🌍 全球科技与开发者社区",
+            "desc": "Hacker News · Product Hunt · TechCrunch · The Verge · Wired · Ars Technica",
+            "order": 3,
+        },
+    }
 
-    for cat in category_order:
+    # 按预设顺序展示
+    sorted_cats = sorted(categories.keys(), key=lambda x: category_config.get(x, {}).get("order", 99))
+
+    for cat in sorted_cats:
         if cat not in categories:
             continue
-        cat_news = categories[cat][:MAX_NEWS_PER_CATEGORY]
 
-        if cat == "AI前沿":
-            lines.append(f"\n---\n### 🤖 AI 前沿动态\n")
-        else:
-            lines.append(f"\n---\n### 🌐 科技综合资讯\n")
+        cat_news = categories[cat]
+        config = category_config.get(cat, {"title": cat, "desc": "", "order": 99})
+
+        lines.append(f"\n---\n### {config['title']}\n")
+        if config["desc"]:
+            lines.append(f"> 📡 来源：{config['desc']}\n")
 
         for i, news in enumerate(cat_news, 1):
-            # 标题行：序号 + 来源标签 + 标题链接 + 时间
+            # 标题行：序号 + 标题链接
             lines.append(f"**{i}. [{news['title']}]({news['link']})**\n")
             # 来源和时间
             lines.append(f"> {news['icon']} {news['source']} · ⏰ {news['time']}\n")
@@ -321,10 +515,19 @@ def format_news_message(all_news):
                 lines.append(f"> {news['summary']}\n")
             lines.append("")
 
-    # 底部信息
+    # 底部统计信息
     lines.append("\n---\n")
-    lines.append(f"*本次共采集 {len(ALL_SOURCES)} 个信息源 | 每3小时自动推送*\n")
-    lines.append(f"*数据源：OpenAI · Google AI · Hugging Face · MIT Tech Review · MarkTechPost · 36氪 · 虎嗅 · 爱范儿 · TechCrunch · The Verge · Wired · Ars Technica*")
+
+    # 统计各分类数量
+    stats_parts = []
+    for cat in sorted_cats:
+        if cat in categories:
+            config = category_config.get(cat, {"title": cat})
+            stats_parts.append(f"{config['title'].split(' ', 1)[-1]} {len(categories[cat])}条")
+
+    lines.append(f"*📊 本次精选：{' | '.join(stats_parts)}*\n")
+    lines.append(f"*📡 共监控 {len(ALL_SOURCES)} 个信息源 | 每3小时自动推送*\n")
+    lines.append(f"*🔄 v3.0 - 覆盖全球顶级AI平台与中文科技媒体*")
 
     desp = "\n".join(lines)
     return title, desp
@@ -362,32 +565,41 @@ def send_to_wechat(title, desp):
 
 
 def main():
-    """主函数：抓取新闻 -> 去重整理 -> 格式化 -> 推送"""
-    print("=" * 50)
-    print(f"🚀 开始抓取科技与AI资讯...")
+    """主函数：抓取新闻 -> 去重整理 -> 智能精选 -> 格式化 -> 推送"""
+    print("=" * 60)
+    print(f"🚀 科技与AI资讯抓取推送 v3.0")
     print(f"📅 当前时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"⏰ 抓取范围: 过去 {FETCH_HOURS} 小时的新闻")
     print(f"📡 信息源数量: {len(ALL_SOURCES)} 个")
-    print("=" * 50)
+    print(f"   - 核心AI平台: {len(AI_PLATFORM_SOURCES)} 个")
+    print(f"   - 中文AI与科技: {len(CN_SOURCES)} 个")
+    print(f"   - 全球科技与社区: {len(GLOBAL_TECH_SOURCES)} 个")
+    print("=" * 60)
 
     all_news = []
+    success_count = 0
+    fail_count = 0
 
     # 逐个抓取RSS源
     for source in ALL_SOURCES:
         news = get_rss_news(source)
+        if news:
+            success_count += 1
+        else:
+            fail_count += 1
         all_news.extend(news)
-        time.sleep(0.5)  # 缩短等待时间，加快抓取速度
+        time.sleep(0.5)  # 适当间隔，避免请求过快
+
+    print(f"\n📊 抓取统计: 成功 {success_count} 个源 / 失败 {fail_count} 个源")
+    print(f"📊 原始新闻: {len(all_news)} 条")
 
     # 去重
     all_news = deduplicate_news(all_news)
-    print(f"\n📊 去重后共 {len(all_news)} 条资讯")
+    print(f"📊 去重后: {len(all_news)} 条")
 
-    # 按时间排序（最新的在前面）
-    # 没有时间的排在最前面（假设是最新的）
-    all_news.sort(key=lambda x: x["published"] or datetime.now(), reverse=True)
-
-    # 限制总数
-    all_news = all_news[:MAX_TOTAL_NEWS]
+    # 智能精选
+    all_news = smart_select(all_news)
+    print(f"📊 精选后: {len(all_news)} 条")
 
     if not all_news:
         print("⚠️ 本次未获取到最新资讯，跳过推送")
@@ -397,7 +609,7 @@ def main():
     title, desp = format_news_message(all_news)
 
     # 推送到微信
-    print(f"\n📤 正在推送 {len(all_news)} 条资讯到微信...")
+    print(f"\n📤 正在推送 {len(all_news)} 条精选资讯到微信...")
     send_to_wechat(title, desp)
 
     print("\n✅ 任务完成!")
