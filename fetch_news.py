@@ -2,22 +2,21 @@
 # -*- coding: utf-8 -*-
 
 """
-科技与AI资讯自动抓取推送脚本 v3.0
-功能：从20+个RSS源抓取最新科技和AI新闻，智能分类精选后通过Server酱推送到微信
+科技与AI资讯自动抓取推送脚本 v3.1
+功能：从21个RSS源抓取最新科技和AI新闻，英文内容自动翻译成中文，
+      智能分类精选后通过Server酱推送到微信
 作者：自动化部署
-更新：2026-03-25 - v3.0 大版本升级
-  - 数据源从12个扩充到20+个
-  - 新增Anthropic/DeepMind/NVIDIA/Meta AI等核心AI平台
-  - 新增机器之心/量子位等中文AI顶会
-  - 新增Hacker News/Product Hunt等开发者社区
-  - 三级分类展示：核心AI平台 / 中文AI与科技 / 全球科技与社区
-  - 智能精选机制，避免信息轰炸
-  - 增加网络请求重试机制，提高稳定性
+更新：2026-03-25 - v3.1 新增英文自动翻译
+  - 所有英文新闻标题和摘要自动翻译成中文
+  - 使用 Google Translate 免费接口，无需API Key
+  - 翻译失败时保留原文，不影响推送
+  - 其余功能与 v3.0 一致
 """
 
 import requests
 import feedparser
 from datetime import datetime, timedelta, timezone
+from deep_translator import GoogleTranslator
 import time
 import os
 import re
@@ -50,6 +49,91 @@ MAX_RETRIES = 2
 REQUEST_TIMEOUT = 15
 
 # ============================================================
+# 翻译功能
+# ============================================================
+
+# 初始化 Google 翻译器（英文 -> 中文）
+translator = GoogleTranslator(source='en', target='zh-CN')
+
+# 翻译缓存，避免重复翻译相同内容
+_translate_cache = {}
+
+
+def is_chinese(text):
+    """
+    判断文本是否主要是中文
+    如果中文字符占比超过30%，就认为是中文内容，不需要翻译
+    """
+    if not text:
+        return True
+    chinese_chars = len(re.findall(r'[\u4e00-\u9fff]', text))
+    total_chars = len(text.strip())
+    if total_chars == 0:
+        return True
+    return (chinese_chars / total_chars) > 0.3
+
+
+def translate_text(text):
+    """
+    将英文文本翻译成中文
+    - 如果文本已经是中文，直接返回
+    - 翻译失败时返回原文，不会报错
+    - 使用缓存避免重复翻译
+    参数：
+        text: 待翻译的文本
+    返回：
+        翻译后的中文文本（或原文）
+    """
+    if not text or not text.strip():
+        return text
+
+    # 如果已经是中文，直接返回
+    if is_chinese(text):
+        return text
+
+    # 检查缓存
+    cache_key = text[:100]  # 用前100个字符作为缓存key
+    if cache_key in _translate_cache:
+        return _translate_cache[cache_key]
+
+    try:
+        # 文本过长时截断（Google Translate 免费接口有长度限制）
+        text_to_translate = text[:500] if len(text) > 500 else text
+        translated = translator.translate(text_to_translate)
+        if translated and translated.strip():
+            _translate_cache[cache_key] = translated
+            return translated
+        else:
+            return text
+    except Exception as e:
+        print(f"    ⚠️ 翻译失败: {str(e)[:50]}，保留原文")
+        return text
+
+
+def translate_news_item(news):
+    """
+    翻译单条新闻的标题和摘要
+    参数：
+        news: 新闻字典
+    返回：
+        翻译后的新闻字典
+    """
+    # 翻译标题
+    if not is_chinese(news["title"]):
+        original_title = news["title"]
+        news["title"] = translate_text(news["title"])
+        # 如果翻译成功，保留原标题作为参考（可选）
+        if news["title"] != original_title:
+            print(f"    🔄 标题翻译: {original_title[:40]}... -> {news['title'][:40]}...")
+
+    # 翻译摘要
+    if news.get("summary") and not is_chinese(news["summary"]):
+        news["summary"] = translate_text(news["summary"])
+
+    return news
+
+
+# ============================================================
 # RSS 新闻源配置（三级分类管理）
 # ============================================================
 
@@ -62,7 +146,8 @@ AI_PLATFORM_SOURCES = [
         "url": "https://openai.com/news/rss.xml",
         "category": "核心AI平台",
         "icon": "🤖",
-        "priority": 1,  # 优先级，1最高
+        "priority": 1,
+        "lang": "en",  # 标记语言，用于判断是否需要翻译
     },
     {
         "name": "Anthropic",
@@ -70,6 +155,7 @@ AI_PLATFORM_SOURCES = [
         "category": "核心AI平台",
         "icon": "🧬",
         "priority": 1,
+        "lang": "en",
     },
     {
         "name": "Google DeepMind",
@@ -77,6 +163,7 @@ AI_PLATFORM_SOURCES = [
         "category": "核心AI平台",
         "icon": "🧠",
         "priority": 1,
+        "lang": "en",
     },
     {
         "name": "Google AI",
@@ -84,6 +171,7 @@ AI_PLATFORM_SOURCES = [
         "category": "核心AI平台",
         "icon": "🔍",
         "priority": 1,
+        "lang": "en",
     },
     {
         "name": "NVIDIA AI",
@@ -91,6 +179,7 @@ AI_PLATFORM_SOURCES = [
         "category": "核心AI平台",
         "icon": "💚",
         "priority": 2,
+        "lang": "en",
     },
     {
         "name": "Meta AI",
@@ -98,6 +187,7 @@ AI_PLATFORM_SOURCES = [
         "category": "核心AI平台",
         "icon": "Ⓜ️",
         "priority": 1,
+        "lang": "en",
     },
     {
         "name": "Hugging Face",
@@ -105,6 +195,7 @@ AI_PLATFORM_SOURCES = [
         "category": "核心AI平台",
         "icon": "🤗",
         "priority": 2,
+        "lang": "en",
     },
     {
         "name": "MIT Tech Review AI",
@@ -112,6 +203,7 @@ AI_PLATFORM_SOURCES = [
         "category": "核心AI平台",
         "icon": "🎓",
         "priority": 2,
+        "lang": "en",
     },
     {
         "name": "MarkTechPost",
@@ -119,6 +211,7 @@ AI_PLATFORM_SOURCES = [
         "category": "核心AI平台",
         "icon": "📝",
         "priority": 3,
+        "lang": "en",
     },
 ]
 
@@ -132,6 +225,7 @@ CN_SOURCES = [
         "category": "中文AI与科技",
         "icon": "⚙️",
         "priority": 1,
+        "lang": "zh",
     },
     {
         "name": "量子位",
@@ -139,6 +233,7 @@ CN_SOURCES = [
         "category": "中文AI与科技",
         "icon": "⚛️",
         "priority": 1,
+        "lang": "zh",
     },
     {
         "name": "36氪",
@@ -146,6 +241,7 @@ CN_SOURCES = [
         "category": "中文AI与科技",
         "icon": "📱",
         "priority": 2,
+        "lang": "zh",
     },
     {
         "name": "虎嗅网",
@@ -153,6 +249,7 @@ CN_SOURCES = [
         "category": "中文AI与科技",
         "icon": "🐯",
         "priority": 2,
+        "lang": "zh",
     },
     {
         "name": "爱范儿",
@@ -160,6 +257,7 @@ CN_SOURCES = [
         "category": "中文AI与科技",
         "icon": "💡",
         "priority": 2,
+        "lang": "zh",
     },
     {
         "name": "少数派",
@@ -167,6 +265,7 @@ CN_SOURCES = [
         "category": "中文AI与科技",
         "icon": "📐",
         "priority": 3,
+        "lang": "zh",
     },
 ]
 
@@ -180,6 +279,7 @@ GLOBAL_TECH_SOURCES = [
         "category": "全球科技与社区",
         "icon": "🔶",
         "priority": 2,
+        "lang": "en",
     },
     {
         "name": "Product Hunt",
@@ -187,6 +287,7 @@ GLOBAL_TECH_SOURCES = [
         "category": "全球科技与社区",
         "icon": "🏹",
         "priority": 2,
+        "lang": "en",
     },
     {
         "name": "TechCrunch",
@@ -194,6 +295,7 @@ GLOBAL_TECH_SOURCES = [
         "category": "全球科技与社区",
         "icon": "🚀",
         "priority": 2,
+        "lang": "en",
     },
     {
         "name": "The Verge",
@@ -201,6 +303,7 @@ GLOBAL_TECH_SOURCES = [
         "category": "全球科技与社区",
         "icon": "⚡",
         "priority": 2,
+        "lang": "en",
     },
     {
         "name": "Wired AI",
@@ -208,6 +311,7 @@ GLOBAL_TECH_SOURCES = [
         "category": "全球科技与社区",
         "icon": "🔌",
         "priority": 3,
+        "lang": "en",
     },
     {
         "name": "Ars Technica",
@@ -215,6 +319,7 @@ GLOBAL_TECH_SOURCES = [
         "category": "全球科技与社区",
         "icon": "🖥️",
         "priority": 3,
+        "lang": "en",
     },
 ]
 
@@ -350,7 +455,7 @@ def get_rss_news(source, hours=FETCH_HOURS):
             summary = get_summary(entry)
             time_str = published.strftime("%H:%M") if published else "最新"
 
-            news_list.append({
+            news_item = {
                 "id": get_news_id(title, link),
                 "title": title,
                 "link": link,
@@ -361,7 +466,10 @@ def get_rss_news(source, hours=FETCH_HOURS):
                 "priority": source["priority"],
                 "time": time_str,
                 "published": published,
-            })
+                "lang": source.get("lang", "en"),
+            }
+
+            news_list.append(news_item)
 
         print(f"  ✅ {source['name']}: 获取到 {len(news_list)} 条新闻")
 
@@ -427,6 +535,39 @@ def smart_select(all_news):
         selected = selected[:MAX_TOTAL_NEWS]
 
     return selected
+
+
+def batch_translate_news(news_list):
+    """
+    批量翻译新闻列表中的英文内容
+    只翻译标记为英文(lang='en')的新闻源的标题和摘要
+    翻译之间加入适当延迟，避免触发频率限制
+    参数：
+        news_list: 新闻列表
+    返回：
+        翻译后的新闻列表
+    """
+    en_count = sum(1 for n in news_list if n.get("lang") == "en")
+    if en_count == 0:
+        print("📝 本次推送全部为中文内容，无需翻译")
+        return news_list
+
+    print(f"\n🔄 开始翻译 {en_count} 条英文新闻...")
+    translated_count = 0
+
+    for news in news_list:
+        if news.get("lang") != "en":
+            continue
+
+        news = translate_news_item(news)
+        translated_count += 1
+
+        # 每翻译一条，稍微等一下，避免触发 Google 频率限制
+        if translated_count < en_count:
+            time.sleep(0.3)
+
+    print(f"🔄 翻译完成: 共翻译 {translated_count} 条新闻")
+    return news_list
 
 
 def format_news_message(all_news):
@@ -527,7 +668,7 @@ def format_news_message(all_news):
 
     lines.append(f"*📊 本次精选：{' | '.join(stats_parts)}*\n")
     lines.append(f"*📡 共监控 {len(ALL_SOURCES)} 个信息源 | 每3小时自动推送*\n")
-    lines.append(f"*🔄 v3.0 - 覆盖全球顶级AI平台与中文科技媒体*")
+    lines.append(f"*🔄 v3.1 - 英文内容已自动翻译为中文*")
 
     desp = "\n".join(lines)
     return title, desp
@@ -565,9 +706,9 @@ def send_to_wechat(title, desp):
 
 
 def main():
-    """主函数：抓取新闻 -> 去重整理 -> 智能精选 -> 格式化 -> 推送"""
+    """主函数：抓取新闻 -> 去重整理 -> 智能精选 -> 翻译 -> 格式化 -> 推送"""
     print("=" * 60)
-    print(f"🚀 科技与AI资讯抓取推送 v3.0")
+    print(f"🚀 科技与AI资讯抓取推送 v3.1（含英文自动翻译）")
     print(f"📅 当前时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"⏰ 抓取范围: 过去 {FETCH_HOURS} 小时的新闻")
     print(f"📡 信息源数量: {len(ALL_SOURCES)} 个")
@@ -604,6 +745,9 @@ def main():
     if not all_news:
         print("⚠️ 本次未获取到最新资讯，跳过推送")
         return
+
+    # 翻译英文新闻为中文
+    all_news = batch_translate_news(all_news)
 
     # 格式化消息
     title, desp = format_news_message(all_news)
